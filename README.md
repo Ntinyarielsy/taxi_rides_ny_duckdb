@@ -1,11 +1,14 @@
 ## Maximizing Confidence in Your Data Model Changes with dbt and PipeRider
 
-This project was created to accompany the PipeRider + dbt workshop on improving your code review for dbt projects.
+This project covers an introduction to Piperide and its relevance in capturing data changes.
+This project builds on the dbt project created by data talks club  [week_4_analytics](https://github.com/DataTalksClub/data-engineering-zoomcamp/tree/main/week_4_analytics_engineering)
+
 
 This workshop project will run you through the following steps:
 
 ### PipeRider Walkthrough
 
+- Piperider overview
 - Initialize PipeRider inside a dbt project
 - Run PipeRider to create a data report
 - Compare data reports
@@ -20,17 +23,31 @@ This workshop project will run you through the following steps:
 - A basic understanding of [dbt](https://docs.getdbt.com/)
 - Install, or update to, [DuckDB](https://duckdb.org/#quickinstall) 0.7.0
 
+## what is piperider
+Piperider is an open-source data impact analysis tool,specifically during pull request for dbt projects.
+
+PipeRider compares the data in your dbt project from before and after making data modeling changes and generates Impact Reports and Summaries.
+
+Impact reports are HTML reports that contains the following:
+- data profile diff-A detailed comparison of data profile statistics about your data.
+- Lineage Diff - A visualization in the form of a directed acyclic graph (DAG) that shows the impact to the data pipeline after changes.
+- Metrics diff - A graph-based comparison of how dbt metrics have been impacted.
+
+:dart:The goal is to generate impact summary that compares development and production environments and give and use the summary in our PR.This helps the peple reviewing the code to easily see the changes that have been made.
 ## Workshop Steps
 
 ### 1. Initial setup
 
 1. Fork this repo
+   ```
+   https://github.com/InfuseAI/taxi_rides_ny_duckdb/tree/main
+   ```
 2. Clone your forked repo
 
-	```bash
+    ```bash
 	git clone <your-repo-url>
-	cd taxi_rides_ny_duckdb
-	```
+ 	cd taxi_rides_ny_duckdb
+   ```
 
 3. Download the DuckDB database file
 
@@ -41,7 +58,7 @@ This workshop project will run you through the following steps:
 
 	```bash
 	python -m venv ./venv
-	source ./venv/bin/activate
+	source ./venv/Scripts/activate
 	```
 5. Update pip and install the neccessary dbt packages and PipeRider
 
@@ -49,10 +66,12 @@ This workshop project will run you through the following steps:
 	pip install -U pip
 	pip install dbt-core dbt-duckdb 'piperider[duckdb]'
 	```
-6. Create a new branch to work on
+6. Create a new branch to work on and switch to it
 
 	```bash
-	git switch -c data-modeling
+	git branch data-modeling
+
+	git checkout data-modelling
 	```
 	
 7. Install dbt deps and build dbt models
@@ -68,7 +87,7 @@ This workshop project will run you through the following steps:
 	piperider init
 	```
 	
-9. Check PipeRider settings
+9.  Check PipeRider settings
 
 	```bash
 	piperider diagnose
@@ -104,8 +123,7 @@ This workshop project will run you through the following steps:
 	select
 	-- Reveneue grouping
 	pickup_zone as revenue_zone,
-	date_trunc('month', pickup_datetime) as revenue_month,
-	--Note: For BQ use instead: date_trunc(pickup_datetime, month) as revenue_month,
+	EXTRACT(MONTH FROM pickup_datetime) AS revenue_month,
 	
 	service_type,
 	
@@ -126,6 +144,31 @@ This workshop project will run you through the following steps:
 	-- avg(passenger_count) as avg_montly_passenger_count,
 	-- avg(trip_distance) as avg_montly_trip_distance
 	```
+    c. Create a new model `models/core/average_trip_distance.sql`
+   ```sql
+   {{ config(materialized='table') }}
+
+   WITH trips AS (
+    SELECT
+    EXTRACT(MONTH FROM pickup_datetime) AS pickup_month,
+    EXTRACT(quarter FROM pickup_datetime) AS pickup_quarter,
+    EXTRACT(year FROM pickup_datetime) AS pickup_year,
+    AVG(trip_distance) AS avg_trip_distance
+    from {{ ref('fact_trips') }}
+  
+    GROUP BY pickup_month, pickup_quarter, pickup_year
+   )
+
+   SELECT
+    pickup_month AS pickup_month,
+    pickup_quarter AS pickup_quarter,
+    pickup_year AS pickup_year,
+    avg_trip_distance AS average_distance
+   FROM trips
+   ```
+
+
+
 
 3. Rebuild the dbt models
 
@@ -155,8 +198,8 @@ This workshop project will run you through the following steps:
 
 	```bash
 	git add .
-	git commit -m "Added statistics model, updated revenue model"
-	git push origin datamodeling
+	git commit -m "Added statistics model and average distance trip model, updated revenue model"
+	git push origin data-modeling
 	```
 	
 7. Create a pull request.
@@ -215,122 +258,6 @@ As per the recipe, PipeRider will **automatically** do the following:
 5. Run PipeRider
 6. Compare the data reports of `main` and `data-modeling`
 7. Output the compare report and summary
-
-
-
-### 4. dbt-defined Metrics
-
-PipeRider also supports profiling [dbt-defined metrics](https://docs.getdbt.com/docs/build/metrics). PipeRider will query dbt metrics and include them in the HTML report.
-
-1. Edit `models/core/schema.yml` and add the following code:
-
-	```yaml
-	metrics:
-	  - name: average_distance
-	    label: Average Distance
-	    model: ref('fact_trips')
-	    description: "The average trip distance"
-	
-	    calculation_method: average
-	    expression: trip_distance
-	
-	    timestamp: pickup_datetime
-	    time_grains: [month, quarter, year]
-	
-	    tags:
-	    - piperider
-	```
-
-	**Important:** Don't forget the `piperider` tag, this is how PipeRider is able to find and query your project metrics
-
-	This defines a new metric on the `fact_trips` table that calculates the average `trip_distance` distance at the `time_grains` of month, quarter, and year.
-
-2. Run dbt compile
-
-	```bash
-	dbt compile
-	```
-	
-	**Note:** As we’re only adding metrics, it is not necessary to build the models again with `dbt build`.
-	
-3. Run PipeRider to generate a new report.
-
-	```bash
-	piperider run
-	```
-
-4. Check the PipeRider report and click the `metrics` tab to view the metrics graph.
-    
-
-### 5. Filter and compare dbt metrics
-
-PipeRider also supports comparing metrics between runs. The comarison is visualized in the Comparison report and included in the comparison summary Markdown. 
-
-1. Edit `models/core/schema.yml` again and add the following `filter` to the metric definition:
-
-	```yaml
-	filters:
-	  - field: pickup_borough
-	    operator: '='
-	    value: "'Manhattan'"
-	  - field: dropoff_borough
-	    operator: '='
-	    value: "'Manhattan'"
-	```
-
-	The filter will modify the metric to only apply to rows that meet the defined conditions - In this case, that the pickup and dropoff borough should be Manhattan.
-
-	Your modified metric definition should now look like this:
-	
-	```yaml
-	metrics:
-	  - name: average_distance
-	    label: Average Distance
-	    model: ref('fact_trips')
-	    description: "The average trip distance"
-
-	    calculation_method: average
-	    expression: trip_distance
-
-	    timestamp: pickup_datetime
-	    time_grains: [month, quarter, year]
-
-	    filters:
-	      - field: pickup_borough
-	        operator: '='
-	        value: "'Manhattan'"
-	      - field: dropoff_borough
-	        operator: '='
-	        value: "'Manhattan'"
-
-	    tags:
-	    - piperider
-	```
-
-2. Compile your dbt project again.
-
-	```bash
-	dbt compile
-	```
-
-3. Run PipeRider again to generate a report with the new, filttered, metrics.
-
-	```bash
-	piperider run
-	```
-
-4. Lastly, run the PipeRider `compare-reports` command to create a comparison report that will include the two, differently defined, metrics.
-
-	```bash
-	piperider compare-reports --last
-	```
-
-5. View the newly generated comparison report to see how the metrics compare.
-
-
-6. The comparison summary also contains a summary of the metric differences between reports.
-
-
 
 
 ## PipeRider resources:
